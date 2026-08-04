@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Connect Kavi</title>
+<!--
+  Kavi connections page (docs/16).
+
+  Opened on a phone from a link the glasses show. It lists the services Kavi can
+  connect, with each one's status, and lets the wearer authorize them through
+  Composio. It is a thin client: the registry and all logic live in the Supabase
+  `connections` Edge Function; this page only renders what the function returns and
+  redirects to the OAuth URL it hands back.
+
+  It is hosted as a PUBLIC static page (GitHub Pages) because the Supabase functions
+  domain refuses to render HTML. Nothing secret is here: only the project URL and
+  the publishable key, both meant to ship to browsers (RLS is on with no policies,
+  so the key can read/write nothing directly).
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #05070a; --card: #0b1410; --line: #1c3326;
+    --green: #40ff5e; --green-dim: #2b6b3a; --text: #e6f2e8; --muted: #8fae98;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: radial-gradient(1200px 600px at 50% -10%, #0c1a12 0%, var(--bg) 60%);
+    color: var(--text); min-height: 100dvh;
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    display: flex; justify-content: center; padding: 28px 16px calc(28px + env(safe-area-inset-bottom));
+  }
+  .wrap { width: 100%; max-width: 460px; }
+  header { margin: 4px 2px 20px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--green);
+         box-shadow: 0 0 14px 2px rgba(64,255,94,.6); }
+  h1 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 8px 2px 0; }
+  .code-chip { display: inline-block; margin-top: 12px; font-size: 12px; color: var(--muted);
+               border: 1px dashed var(--green-dim); border-radius: 8px; padding: 4px 10px; }
+  .code-chip b { color: var(--green); font-weight: 700; letter-spacing: .5px; }
+
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+  .row { display: flex; align-items: center; gap: 14px; background: var(--card);
+         border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .row.just { border-color: var(--green); box-shadow: 0 0 0 1px var(--green) inset; }
+  .ico { flex: 0 0 auto; width: 42px; height: 42px; display: grid; place-items: center;
+         font-size: 22px; background: #08110c; border: 1px solid var(--line); border-radius: 11px; }
+  .meta { flex: 1 1 auto; min-width: 0; }
+  .name { font-weight: 650; font-size: 15px; }
+  .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .act { flex: 0 0 auto; }
+  button { font: inherit; font-weight: 650; font-size: 14px; border-radius: 10px; padding: 9px 14px;
+           border: 2px solid var(--green); background: #0b160d; color: var(--green); cursor: pointer; }
+  button:disabled { opacity: .55; cursor: default; }
+  .ok { color: var(--green); font-weight: 700; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
+  .msg { margin: 16px 2px 0; font-size: 14px; min-height: 20px; color: var(--muted); }
+  .msg.bad { color: #ff9d8f; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 22px; text-align: center; line-height: 1.6; }
+  .skeleton { height: 72px; border-radius: 14px; background: linear-gradient(90deg,#0b1410,#0f1c14,#0b1410);
+              background-size: 200% 100%; animation: sh 1.2s linear infinite; }
+  @keyframes sh { to { background-position: -200% 0; } }
+</style></head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand"><span class="dot"></span><h1>Connect Kavi</h1></div>
+      <p class="sub">Authorize the services you want Kavi to use. Each is a one-time sign-in on this phone — nothing is stored on your glasses but a revocable token.</p>
+      <span class="code-chip" id="chip" hidden>glasses code <b id="chipcode"></b></span>
+    </header>
+
+    <ul id="list">
+      <li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li>
+    </ul>
+
+    <p class="msg" id="msg"></p>
+    <p class="foot">Powered by Composio · Face memory works without any of these — it's built in.</p>
+  </div>
+
+<script>
+  // Both values are safe to ship to a browser (see the note at the top).
+  const SUPABASE_URL = 'https://qnjqghqjdyqrpifrbbdf.supabase.co';
+  const ANON = 'sb_publishable_a2TGE2bo1NFdfpMyoaettw_u1PJuQUD';
+  const FN = SUPABASE_URL + '/functions/v1/connections';
+
+  const params = new URLSearchParams(location.search);
+  const CODE = (params.get('code') || '').trim().toLowerCase();
+  const justConnected = (params.get('connected') || '').trim().toLowerCase();
+
+  const $ = (id) => document.getElementById(id);
+  const msg = (t, bad) => { const m = $('msg'); m.textContent = t || ''; m.className = 'msg' + (bad ? ' bad' : ''); };
+
+  async function call(body) {
+    let res;
+    try {
+      res = await fetch(FN, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', apikey: ANON, authorization: 'Bearer ' + ANON },
+        body: JSON.stringify(body),
+      });
+    } catch (e) { return { ok: false, data: { error: 'Network error — check your connection.' } }; }
+    let data = null; try { data = await res.json(); } catch (e) { /* not JSON */ }
+    return { ok: res.ok, data };
+  }
+
+  function render(connections) {
+    const list = $('list');
+    list.innerHTML = '';
+    for (const c of connections) {
+      const li = document.createElement('li');
+      li.className = 'row' + (c.slug === justConnected ? ' just' : '');
+      const act = c.connected
+        ? '<span class="ok">✓ Connected</span>'
+        : '<button data-slug="' + c.slug + '">Connect</button>';
+      li.innerHTML =
+        '<div class="ico">' + (c.icon || '🔌') + '</div>' +
+        '<div class="meta"><div class="name">' + c.name + '</div><div class="desc">' + (c.summary || '') + '</div></div>' +
+        '<div class="act">' + act + '</div>';
+      list.appendChild(li);
+    }
+    list.querySelectorAll('button[data-slug]').forEach((b) =>
+      b.addEventListener('click', () => connect(b.dataset.slug, b)));
+  }
+
+  async function connect(slug, btn) {
+    btn.disabled = true; btn.textContent = 'Opening…'; msg('');
+    const { data } = await call({ action: 'authorize', slug, user_code: CODE });
+    if (!data || !data.url) {
+      btn.disabled = false; btn.textContent = 'Connect';
+      return msg((data && data.error) || 'Could not start — is the server configured?', true);
+    }
+    location.href = data.url;   // → Composio → provider consent → back here with ?connected=<slug>
+  }
+
+  async function load() {
+    if (!CODE) { msg('Open this page from the link your glasses show.', true); $('list').innerHTML = ''; return; }
+    $('chipcode').textContent = CODE; $('chip').hidden = false;
+    const { data } = await call({ action: 'list', user_code: CODE });
+    if (!data || data.ok === false || !Array.isArray(data.connections)) {
+      $('list').innerHTML = '';
+      return msg((data && data.error) || 'That code has expired — start again on your glasses.', true);
+    }
+    render(data.connections);
+    if (justConnected) {
+      const c = data.connections.find((x) => x.slug === justConnected);
+      msg(c && c.connected ? (c.name + ' connected. Say “Kavi sync” on your glasses to use it.')
+                           : 'Finishing up — pull to refresh in a moment.');
+    }
+  }
+
+  load();
+</script>
+</body></html>
