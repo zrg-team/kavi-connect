@@ -41,6 +41,8 @@
   .code-chip { display: inline-block; margin-top: 12px; font-size: 12px; color: var(--muted);
                border: 1px dashed var(--green-dim); border-radius: 8px; padding: 4px 10px; }
   .code-chip b { color: var(--green); font-weight: 700; letter-spacing: .5px; }
+  .signin { margin-top: 12px; font-size: 13px; color: var(--green); font-weight: 600; }
+  .signin small { display: block; color: var(--muted); font-weight: 400; margin-top: 2px; }
 
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
   .row { display: flex; align-items: center; gap: 14px; background: var(--card);
@@ -69,6 +71,7 @@
       <div class="brand"><span class="dot"></span><h1>Connect Kavi</h1></div>
       <p class="sub">Authorize the services you want Kavi to use. Each is a one-time sign-in on this phone — nothing is stored on your glasses but a revocable token.</p>
       <span class="code-chip" id="chip" hidden>glasses code <b id="chipcode"></b></span>
+      <div class="signin" id="signin" hidden></div>
     </header>
 
     <ul id="list">
@@ -84,6 +87,7 @@
   const SUPABASE_URL = 'https://qnjqghqjdyqrpifrbbdf.supabase.co';
   const ANON = 'sb_publishable_a2TGE2bo1NFdfpMyoaettw_u1PJuQUD';
   const FN = SUPABASE_URL + '/functions/v1/connections';
+  const PAIR = SUPABASE_URL + '/functions/v1/pair';
 
   const params = new URLSearchParams(location.search);
   const CODE = (params.get('code') || '').trim().toLowerCase();
@@ -92,10 +96,10 @@
   const $ = (id) => document.getElementById(id);
   const msg = (t, bad) => { const m = $('msg'); m.textContent = t || ''; m.className = 'msg' + (bad ? ' bad' : ''); };
 
-  async function call(body) {
+  async function call(endpoint, body) {
     let res;
     try {
-      res = await fetch(FN, {
+      res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json', apikey: ANON, authorization: 'Bearer ' + ANON },
         body: JSON.stringify(body),
@@ -103,6 +107,19 @@
     } catch (e) { return { ok: false, data: { error: 'Network error — check your connection.' } }; }
     let data = null; try { data = await res.json(); } catch (e) { /* not JSON */ }
     return { ok: res.ok, data };
+  }
+
+  // Opening this page with the glasses' code IS the sign-in: approve the pairing
+  // so the glasses can claim their token. Face memory then works right away;
+  // services below are authorized separately.
+  async function signIn() {
+    const { data } = await call(PAIR, { action: 'approve', user_code: CODE });
+    const el = document.getElementById('signin');
+    if (data && data.ok !== false) {
+      el.hidden = false;
+      el.innerHTML = '✓ Your glasses are signed in' +
+        (data.confirm_word ? '<small>They should show “' + data.confirm_word + '” — press the temple to finish.</small>' : '');
+    }
   }
 
   function render(connections) {
@@ -126,7 +143,7 @@
 
   async function connect(slug, btn) {
     btn.disabled = true; btn.textContent = 'Opening…'; msg('');
-    const { data } = await call({ action: 'authorize', slug, user_code: CODE });
+    const { data } = await call(FN, { action: 'authorize', slug, user_code: CODE });
     if (!data || !data.url) {
       btn.disabled = false; btn.textContent = 'Connect';
       return msg((data && data.error) || 'Could not start — is the server configured?', true);
@@ -137,7 +154,8 @@
   async function load() {
     if (!CODE) { msg('Open this page from the link your glasses show.', true); $('list').innerHTML = ''; return; }
     $('chipcode').textContent = CODE; $('chip').hidden = false;
-    const { data } = await call({ action: 'list', user_code: CODE });
+    signIn();   // sign the glasses in (fire-and-update); the list loads in parallel
+    const { data } = await call(FN, { action: 'list', user_code: CODE });
     if (!data || data.ok === false || !Array.isArray(data.connections)) {
       $('list').innerHTML = '';
       return msg((data && data.error) || 'That code has expired — start again on your glasses.', true);
