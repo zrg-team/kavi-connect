@@ -173,6 +173,19 @@
   .foot{color:var(--dim); font-size:11.5px; margin-top:24px; text-align:center; line-height:1.7}
   .foot b{color:var(--mut); font-weight:600}
   @media (min-width:860px){ .deck.ready .foot{grid-column:1 / -1} }
+  /* keep-signed-in + passcode modal */
+  .keep{width:100%; margin-top:14px; justify-content:center; display:flex; align-items:center; gap:7px}
+  .modal-bg{position:fixed; inset:0; z-index:30; display:grid; place-items:center; padding:20px;
+    background:rgba(2,6,4,.74); -webkit-backdrop-filter:blur(7px); backdrop-filter:blur(7px)}
+  .modal{width:100%; max-width:360px; padding:22px; border-radius:18px; background:var(--bg-elev);
+    border:1px solid var(--line-2); box-shadow:0 24px 64px rgba(0,0,0,.6), 0 0 40px rgba(64,255,94,.09)}
+  .modal h2{margin:0; font-size:18px; font-weight:800; letter-spacing:.3px; color:var(--ink)}
+  .modal p{color:var(--mut); font-size:13.5px; margin:9px 0 0; line-height:1.5}
+  .modal input{margin-top:14px}
+  .modal .warn{color:var(--mut); font-size:12px; margin-top:9px; line-height:1.45}
+  .modal .err{color:var(--bad); font-size:13px; margin-top:11px; min-height:17px}
+  .modal .actions{display:flex; gap:10px; margin-top:18px}
+  .modal .actions .btn{flex:1; text-align:center}
   [hidden]{display:none !important}
   @media (prefers-reduced-motion:reduce){ *{animation:none !important} .reveal{opacity:1; transform:none} }
 </style>
@@ -192,6 +205,7 @@
       <div class="stat"><div class="n" id="s-ppl">–</div><div class="k">People</div></div>
       <div class="stat"><div class="n" id="s-sc">–</div><div class="k">Shortcuts</div></div>
     </div>
+    <button class="btn keep" id="keep" hidden>🔒 Keep me signed in on this phone</button>
   </div>
 
   <div class="main reveal" style="animation-delay:.08s">
@@ -222,6 +236,22 @@
   </div>
 
   <p class="foot reveal" style="animation-delay:.16s">Powered by <b>Composio</b> · Face memory works without any of these — it’s built&nbsp;in.</p>
+
+  <!-- passcode modal (enroll + unlock) -->
+  <div class="modal-bg" id="modal" hidden>
+    <div class="modal">
+      <h2 id="m-title"></h2>
+      <p id="m-desc"></p>
+      <input id="m-pass" type="password" inputmode="numeric" autocomplete="off" autocapitalize="off" placeholder="Passcode">
+      <input id="m-pass2" type="password" inputmode="numeric" autocomplete="off" autocapitalize="off" placeholder="Confirm passcode" hidden>
+      <div class="warn" id="m-warn" hidden></div>
+      <div class="err" id="m-err"></div>
+      <div class="actions">
+        <button class="btn ghost" id="m-alt"></button>
+        <button class="btn solid" id="m-go"></button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -239,6 +269,7 @@ const show = (id, on = true) => { $(id).hidden = !on; };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 const mono = (n) => String(n||'?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase() || '?';
 let CODE = new URLSearchParams(location.search).get('code') || '';
+let CT = ''; // durable console token, set after a passcode (later passkey) unlock
 let msgTimer;
 function msg(text, isErr) {
   const m = $('msg') || (() => { const p = document.createElement('p'); p.id = 'msg'; p.className = 'msg';
@@ -255,7 +286,7 @@ async function api(action, extra = {}) {
       'content-type': 'application/json', apikey: ANON, authorization: 'Bearer ' + ANON,
       ...(APP_KEY ? { 'x-app-key': APP_KEY } : {}),
     },
-    body: JSON.stringify({ action, user_code: CODE, ...extra }),
+    body: JSON.stringify({ action, ...(CODE ? { user_code: CODE } : {}), ...(CT ? { console_token: CT } : {}), ...extra }),
   });
   const j = await r.json().catch(() => ({}));
   if (!j.ok) { const e = new Error(j.error || ('HTTP ' + r.status)); e.reason = j.reason; throw e; }
@@ -270,6 +301,7 @@ async function start() {
     const st = await api('signin-status'); // also approves a pending sign-in server-side
     const { people } = await api('people'); // succeeds only if the code resolves to a tenant
     openApp();
+    offerKeep();
     if (st.approved) show('signin', true);
     setStat('s-ppl', people.length);
     // shortcuts count for the header (people already known; connections set on render)
@@ -392,7 +424,122 @@ async function loadAliases() {
   } catch (e) { el.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 
-start();
+// ── durable session: a console token kept in localStorage, encrypted under a ──
+// passcode. Not as strong as a passkey (a short code is brute-forceable OFFLINE
+// if the phone is stolen), so PBKDF2 + AES-GCM raises the cost, the token is
+// server-revocable and lapses in 14 days, and the blob wipes after 8 wrong tries.
+const SKEY = 'kavi.session';
+const loadSession = () => { try { return JSON.parse(localStorage.getItem(SKEY) || 'null'); } catch { return null; } };
+const saveSession = (b) => { try { localStorage.setItem(SKEY, JSON.stringify(b)); } catch { /* full/blocked */ } };
+const clearSession = () => { try { localStorage.removeItem(SKEY); } catch { /* ignore */ } };
+const cryptoOk = () => !!(window.isSecureContext && window.crypto && crypto.subtle);
+
+const _te = new TextEncoder(), _td = new TextDecoder();
+const _b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const _ub64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+async function _key(passcode, salt) {
+  const base = await crypto.subtle.importKey('raw', _te.encode(passcode), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 210000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function encToken(token, passcode) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await _key(passcode, salt), _te.encode(token));
+  return { v: 1, salt: _b64(salt), iv: _b64(iv), ct: _b64(ct), tries: 0 };
+}
+async function decToken(blob, passcode) { // throws on a wrong passcode (GCM auth tag)
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: _ub64(blob.iv) }, await _key(passcode, _ub64(blob.salt)), _ub64(blob.ct));
+  return _td.decode(pt);
+}
+
+// Offer to remember this browser — only after a fresh code sign-in, only where
+// the browser can actually encrypt, and only if nothing is saved yet.
+function offerKeep() { if (CODE && cryptoOk() && !loadSession()) show('keep', true); }
+$('keep').onclick = () => openModal('enroll');
+
+// Sign in from a durable token (passcode-decrypted here; passkey later).
+async function unlockFromToken(token) {
+  CT = token;
+  const { people } = await api('people'); // verifies the token still resolves (else throws no-owner)
+  show('readout', false);
+  openApp();
+  show('signin', true);
+  setStat('s-ppl', people.length);
+  api('aliases').then(({ aliases }) => setStat('s-sc', aliases.length)).catch(() => {});
+}
+
+// ── passcode modal (enroll + unlock) ─────────────────────────────────────────
+let modalMode = '', modalBlob = null;
+function openModal(mode, blob) {
+  modalMode = mode; modalBlob = blob || null;
+  const enroll = mode === 'enroll';
+  $('m-title').textContent = enroll ? 'Keep me signed in' : 'Welcome back';
+  $('m-desc').textContent = enroll
+    ? 'Set a passcode to reopen this console later without a glasses code. It’s stored encrypted on this phone only.'
+    : 'Enter your passcode to reopen your Kavi console.';
+  show('m-pass2', enroll);
+  $('m-alt').textContent = enroll ? 'Cancel' : 'Clear this device';
+  $('m-go').textContent = enroll ? 'Save' : 'Unlock';
+  $('m-pass').value = ''; $('m-pass2').value = ''; $('m-err').textContent = ''; show('m-warn', false);
+  show('modal', true);
+  setTimeout(() => $('m-pass').focus(), 40);
+}
+const closeModal = () => show('modal', false);
+$('m-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') (modalMode === 'enroll' ? $('m-pass2').focus() : $('m-go').click()); });
+$('m-pass2').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('m-go').click(); });
+
+$('m-alt').onclick = async () => {
+  if (modalMode === 'enroll') { closeModal(); return; }
+  try { if (CT) await api('session.revoke'); } catch { /* best effort */ }
+  clearSession(); closeModal(); show('need-code', true);
+  msg('Cleared. Say “Kavi start” on your glasses to sign in again.');
+};
+
+$('m-go').onclick = async () => {
+  const pass = $('m-pass').value;
+  const err = (t) => { $('m-err').textContent = t; };
+  if (modalMode === 'enroll') {
+    if (pass.length < 4) return err('Use at least 4 characters.');
+    if (pass !== $('m-pass2').value) return err('The two passcodes don’t match.');
+    if (pass.length < 6) { $('m-warn').textContent = 'Tip: 6+ characters is safer — a short code can be guessed if your phone is lost or stolen.'; show('m-warn', true); }
+    $('m-go').disabled = true;
+    try {
+      const { console_token } = await api('session.issue', { label: 'Phone console' });
+      saveSession(await encToken(console_token, pass));
+      closeModal(); show('keep', false); msg('Saved — reopen anytime with your passcode.');
+    } catch (e) { err(e.message || 'Could not save.'); }
+    finally { $('m-go').disabled = false; }
+    return;
+  }
+  // unlock
+  if (!pass) return;
+  $('m-go').disabled = true;
+  let token;
+  try { token = await decToken(modalBlob, pass); }
+  catch {
+    modalBlob.tries = (modalBlob.tries || 0) + 1;
+    if (modalBlob.tries >= 8) { clearSession(); closeModal(); show('need-code', true); msg('Too many tries — this device was cleared. Sign in from your glasses.', true); }
+    else { saveSession(modalBlob); err('Wrong passcode — ' + (8 - modalBlob.tries) + ' tries left.'); }
+    $('m-go').disabled = false; return;
+  }
+  modalBlob.tries = 0; saveSession(modalBlob); // correct passcode → reset the counter
+  try { await unlockFromToken(token); closeModal(); }
+  catch (e) {
+    if (e.reason === 'no-owner') { clearSession(); closeModal(); show('need-code', true); msg('That session expired — sign in from your glasses.', true); }
+    else { err(e.message || 'Could not reopen.'); }
+  }
+  $('m-go').disabled = false;
+};
+
+// ── boot ─────────────────────────────────────────────────────────────────────
+async function boot() {
+  if (CODE) return start();                         // fresh code → sign in, then offer to remember
+  const blob = loadSession();
+  if (blob && cryptoOk()) return openModal('unlock', blob); // saved session → ask for the passcode
+  show('need-code', true);                           // nothing kept → enter a code
+}
+boot();
 </script>
 </body>
 </html>
