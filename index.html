@@ -1,173 +1,204 @@
 <!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Connect Kavi</title>
-<!--
-  Kavi connections page (docs/16).
-
-  Opened on a phone from a link the glasses show. It lists the services Kavi can
-  connect, with each one's status, and lets the wearer authorize them through
-  Composio. It is a thin client: the registry and all logic live in the Supabase
-  `connections` Edge Function; this page only renders what the function returns and
-  redirects to the OAuth URL it hands back.
-
-  It is hosted as a PUBLIC static page (GitHub Pages) because the Supabase functions
-  domain refuses to render HTML. Nothing secret is here: only the project URL and
-  the publishable key, both meant to ship to browsers (RLS is on with no policies,
-  so the key can read/write nothing directly).
--->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kavi</title>
 <style>
-  :root {
-    color-scheme: dark;
-    --bg: #05070a; --card: #0b1410; --line: #1c3326;
-    --green: #40ff5e; --green-dim: #2b6b3a; --text: #e6f2e8; --muted: #8fae98;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; }
-  body {
-    background: radial-gradient(1200px 600px at 50% -10%, #0c1a12 0%, var(--bg) 60%);
-    color: var(--text); min-height: 100dvh;
-    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    display: flex; justify-content: center; padding: 28px 16px calc(28px + env(safe-area-inset-bottom));
-  }
-  .wrap { width: 100%; max-width: 460px; }
-  header { margin: 4px 2px 20px; }
-  .brand { display: flex; align-items: center; gap: 10px; }
-  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--green);
-         box-shadow: 0 0 14px 2px rgba(64,255,94,.6); }
-  h1 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: .2px; }
-  .sub { color: var(--muted); font-size: 14px; margin: 8px 2px 0; }
-  .code-chip { display: inline-block; margin-top: 12px; font-size: 12px; color: var(--muted);
-               border: 1px dashed var(--green-dim); border-radius: 8px; padding: 4px 10px; }
-  .code-chip b { color: var(--green); font-weight: 700; letter-spacing: .5px; }
-  .signin { margin-top: 12px; font-size: 13px; color: var(--green); font-weight: 600; }
-  .signin small { display: block; color: var(--muted); font-weight: 400; margin-top: 2px; }
-
-  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-  .row { display: flex; align-items: center; gap: 14px; background: var(--card);
-         border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
-  .row.just { border-color: var(--green); box-shadow: 0 0 0 1px var(--green) inset; }
-  .ico { flex: 0 0 auto; width: 42px; height: 42px; display: grid; place-items: center;
-         font-size: 22px; background: #08110c; border: 1px solid var(--line); border-radius: 11px; }
-  .meta { flex: 1 1 auto; min-width: 0; }
-  .name { font-weight: 650; font-size: 15px; }
-  .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
-  .act { flex: 0 0 auto; }
-  button { font: inherit; font-weight: 650; font-size: 14px; border-radius: 10px; padding: 9px 14px;
-           border: 2px solid var(--green); background: #0b160d; color: var(--green); cursor: pointer; }
-  button:disabled { opacity: .55; cursor: default; }
-  .ok { color: var(--green); font-weight: 700; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
-  .msg { margin: 16px 2px 0; font-size: 14px; min-height: 20px; color: var(--muted); }
-  .msg.bad { color: #ff9d8f; }
-  .foot { color: var(--muted); font-size: 12px; margin-top: 22px; text-align: center; line-height: 1.6; }
-  .skeleton { height: 72px; border-radius: 14px; background: linear-gradient(90deg,#0b1410,#0f1c14,#0b1410);
-              background-size: 200% 100%; animation: sh 1.2s linear infinite; }
-  @keyframes sh { to { background-position: -200% 0; } }
-</style></head>
+  :root { --g:#40ff5e; --g6:rgba(64,255,94,.6); --g4:rgba(64,255,94,.4); --g08:rgba(64,255,94,.08); --bg:#000; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--g); font:15px/1.5 -apple-system,system-ui,sans-serif; }
+  header { display:flex; align-items:center; justify-content:space-between; padding:16px; border-bottom:1px solid var(--g4); }
+  h1 { font:700 20px/1 ui-monospace,monospace; margin:0; letter-spacing:1px; }
+  main { max-width:560px; margin:0 auto; padding:16px; }
+  button { font:inherit; color:var(--g); background:transparent; border:1px solid var(--g6); border-radius:10px; padding:10px 14px; cursor:pointer; }
+  button.primary { background:var(--g); color:#000; font-weight:700; border-color:var(--g); }
+  button.ghost { border-color:var(--g4); color:var(--g6); }
+  button:active { opacity:.7; }
+  input, textarea, select { font:inherit; color:var(--g); background:#000; border:1px solid var(--g4); border-radius:10px; padding:10px; width:100%; }
+  nav { display:flex; gap:8px; margin:16px 0; }
+  nav button { flex:1; }
+  nav button.on { background:var(--g08); border-color:var(--g); }
+  .card { border:1px solid var(--g4); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .muted { color:var(--g6); font-size:13px; }
+  .err { color:var(--g); background:var(--g08); border:1px solid var(--g4); border-radius:10px; padding:10px; margin:10px 0; }
+  .stack > * + * { margin-top:8px; }
+  .center { text-align:center; padding:48px 16px; }
+  label { display:block; font-size:12px; color:var(--g6); margin:10px 0 4px; }
+  .tick { color:var(--g); }
+  .hide { display:none; }
+  code { font:14px ui-monospace,monospace; color:var(--g); }
+</style>
+</head>
 <body>
-  <div class="wrap">
-    <header>
-      <div class="brand"><span class="dot"></span><h1>Connect Kavi</h1></div>
-      <p class="sub">Authorize the services you want Kavi to use. Each is a one-time sign-in on this phone — nothing is stored on your glasses but a revocable token.</p>
-      <span class="code-chip" id="chip" hidden>glasses code <b id="chipcode"></b></span>
-      <div class="signin" id="signin" hidden></div>
-    </header>
+<header>
+  <h1>Kavi</h1>
+  <span id="hdr" class="muted"></span>
+</header>
+<main>
+  <div id="msg"></div>
 
-    <ul id="list">
-      <li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li>
-    </ul>
+  <!-- no code: ask for one -->
+  <section id="need-code" class="center hide">
+    <p>Manage your connections, the people Kavi remembers, and your voice shortcuts.</p>
+    <p class="muted">Say “Kavi start” on your glasses and open the link they show — or enter the code.</p>
+    <div class="stack" style="max-width:280px;margin:16px auto 0">
+      <input id="code" placeholder="e.g. olive-cedar-69" autocapitalize="off" autocomplete="off">
+      <button class="primary" id="usecode">Open</button>
+    </div>
+  </section>
 
-    <p class="msg" id="msg"></p>
-    <p class="foot">Powered by Composio · Face memory works without any of these — it's built in.</p>
-  </div>
+  <!-- the app -->
+  <section id="app" class="hide">
+    <nav>
+      <button data-tab="connections" class="on">Connections</button>
+      <button data-tab="memories">People</button>
+      <button data-tab="aliases">Shortcuts</button>
+    </nav>
+    <div id="tab-connections"></div>
+    <div id="tab-memories" class="hide"></div>
+    <div id="tab-aliases" class="hide"></div>
+  </section>
+</main>
 
 <script>
-  // Both values are safe to ship to a browser (see the note at the top).
-  const SUPABASE_URL = 'https://qnjqghqjdyqrpifrbbdf.supabase.co';
-  const ANON = 'sb_publishable_a2TGE2bo1NFdfpMyoaettw_u1PJuQUD';
-  const FN = SUPABASE_URL + '/functions/v1/connections';
-  const PAIR = SUPABASE_URL + '/functions/v1/pair';
+// ── config (public values) ──────────────────────────────────────────────────
+const FN = 'https://qnjqghqjdyqrpifrbbdf.supabase.co/functions/v1';
+const ANON = 'sb_publishable_a2TGE2bo1NFdfpMyoaettw_u1PJuQUD';
 
-  const params = new URLSearchParams(location.search);
-  const CODE = (params.get('code') || '').trim().toLowerCase();
-  const justConnected = (params.get('connected') || '').trim().toLowerCase();
+const $ = (id) => document.getElementById(id);
+const show = (id, on = true) => $(id).classList.toggle('hide', !on);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+let CODE = new URLSearchParams(location.search).get('code') || '';
+let msgTimer;
+function msg(text, isErr) {
+  $('msg').innerHTML = text ? `<div class="${isErr ? 'err' : 'muted'}">${esc(text)}</div>` : '';
+  clearTimeout(msgTimer); if (text && !isErr) msgTimer = setTimeout(() => msg(''), 2500);
+}
 
-  const $ = (id) => document.getElementById(id);
-  const msg = (t, bad) => { const m = $('msg'); m.textContent = t || ''; m.className = 'msg' + (bad ? ' bad' : ''); };
+// ── the console API, always carrying the pairing code ────────────────────────
+async function api(action, extra = {}) {
+  const r = await fetch(FN + '/console', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', apikey: ANON, authorization: 'Bearer ' + ANON },
+    body: JSON.stringify({ action, user_code: CODE, ...extra }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!j.ok) { const e = new Error(j.error || ('HTTP ' + r.status)); e.reason = j.reason; throw e; }
+  return j;
+}
 
-  async function call(endpoint, body) {
-    let res;
-    try {
-      res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', apikey: ANON, authorization: 'Bearer ' + ANON },
-        body: JSON.stringify(body),
-      });
-    } catch (e) { return { ok: false, data: { error: 'Network error — check your connection.' } }; }
-    let data = null; try { data = await res.json(); } catch (e) { /* not JSON */ }
-    return { ok: res.ok, data };
+// ── entry ────────────────────────────────────────────────────────────────────
+async function start() {
+  msg('');
+  if (!CODE) { show('need-code', true); show('app', false); return; }
+  try {
+    await api('people');       // succeeds only if the code resolves to a tenant
+    openApp();
+  } catch (e) {
+    if (e.reason === 'no-owner') { show('need-code', true); $('code').value = CODE; msg('That code has expired — say “Kavi start” for a fresh one.', true); }
+    else { msg(e.message, true); }
   }
+}
+$('usecode').onclick = () => { CODE = $('code').value.trim().toLowerCase(); start(); };
 
-  // Opening this page with the glasses' code IS the sign-in: approve the pairing
-  // so the glasses can claim their token. Face memory then works right away;
-  // services below are authorized separately.
-  async function signIn() {
-    const { data } = await call(PAIR, { action: 'approve', user_code: CODE });
-    const el = document.getElementById('signin');
-    if (data && data.ok !== false) {
-      el.hidden = false;
-      el.innerHTML = '✓ Your glasses are signed in' +
-        (data.confirm_word ? '<small>They should show “' + data.confirm_word + '” — press the temple to finish.</small>' : '');
-    }
-  }
+function openApp() { show('need-code', false); show('app', true); $('hdr').textContent = 'linked'; selectTab('connections'); }
 
-  function render(connections) {
-    const list = $('list');
-    list.innerHTML = '';
-    for (const c of connections) {
-      const li = document.createElement('li');
-      li.className = 'row' + (c.slug === justConnected ? ' just' : '');
-      const act = c.connected
-        ? '<span class="ok">✓ Connected</span>'
-        : '<button data-slug="' + c.slug + '">Connect</button>';
-      li.innerHTML =
-        '<div class="ico">' + (c.icon || '🔌') + '</div>' +
-        '<div class="meta"><div class="name">' + c.name + '</div><div class="desc">' + (c.summary || '') + '</div></div>' +
-        '<div class="act">' + act + '</div>';
-      list.appendChild(li);
-    }
-    list.querySelectorAll('button[data-slug]').forEach((b) =>
-      b.addEventListener('click', () => connect(b.dataset.slug, b)));
-  }
+// ── tabs ─────────────────────────────────────────────────────────────────────
+document.querySelectorAll('nav button').forEach((b) => b.onclick = () => selectTab(b.dataset.tab));
+function selectTab(tab) {
+  document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  ['connections','memories','aliases'].forEach((t) => show('tab-' + t, t === tab));
+  if (tab === 'connections') loadConnections();
+  if (tab === 'memories') loadMemories();
+  if (tab === 'aliases') loadAliases();
+}
 
-  async function connect(slug, btn) {
-    btn.disabled = true; btn.textContent = 'Opening…'; msg('');
-    const { data } = await call(FN, { action: 'authorize', slug, user_code: CODE });
-    if (!data || !data.url) {
-      btn.disabled = false; btn.textContent = 'Connect';
-      return msg((data && data.error) || 'Could not start — is the server configured?', true);
-    }
-    location.href = data.url;   // → Composio → provider consent → back here with ?connected=<slug>
-  }
+// ── connections ──────────────────────────────────────────────────────────────
+async function loadConnections() {
+  const el = $('tab-connections'); el.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const { connections } = await api('connections');
+    el.innerHTML = connections.map((c) => `
+      <div class="card">
+        <div class="row">
+          <div><b>${c.icon || ''} ${esc(c.name)}</b><div class="muted">${esc(c.summary)}</div></div>
+          ${c.connected ? '<span class="tick">✓ connected</span>' : `<button class="primary" data-connect="${esc(c.slug)}">Connect</button>`}
+        </div>
+      </div>`).join('');
+    el.querySelectorAll('[data-connect]').forEach((b) => b.onclick = async () => {
+      try { const { url } = await api('connect', { slug: b.dataset.connect }); location.href = url; }
+      catch (e) { msg(e.message, true); }
+    });
+  } catch (e) { el.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
 
-  async function load() {
-    if (!CODE) { msg('Open this page from the link your glasses show.', true); $('list').innerHTML = ''; return; }
-    $('chipcode').textContent = CODE; $('chip').hidden = false;
-    signIn();   // sign the glasses in (fire-and-update); the list loads in parallel
-    const { data } = await call(FN, { action: 'list', user_code: CODE });
-    if (!data || data.ok === false || !Array.isArray(data.connections)) {
-      $('list').innerHTML = '';
-      return msg((data && data.error) || 'That code has expired — start again on your glasses.', true);
-    }
-    render(data.connections);
-    if (justConnected) {
-      const c = data.connections.find((x) => x.slug === justConnected);
-      msg(c && c.connected ? (c.name + ' connected. Say “Kavi sync” on your glasses to use it.')
-                           : 'Finishing up — pull to refresh in a moment.');
-    }
-  }
+// ── memories ─────────────────────────────────────────────────────────────────
+async function loadMemories() {
+  const el = $('tab-memories'); el.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const { people } = await api('people');
+    if (!people.length) { el.innerHTML = '<p class="muted">No one yet. Say “Kavi halo” at someone to remember them.</p>'; return; }
+    el.innerHTML = people.map((p) => `
+      <div class="card" data-id="${esc(p.id)}">
+        <input class="name" value="${esc(p.name)}">
+        <label>Note</label><textarea class="note" rows="2">${esc(p.note)}</textarea>
+        <label>Email</label><input class="email" value="${esc(p.email)}">
+        <div class="row" style="margin-top:10px">
+          <span class="muted">seen ${p.seen_count || 1}×</span>
+          <span><button class="save">Save</button> <button class="ghost forget">Forget</button></span>
+        </div>
+      </div>`).join('');
+    el.querySelectorAll('.card').forEach((card) => {
+      const id = card.dataset.id;
+      card.querySelector('.save').onclick = async () => {
+        try { await api('person', { id, name:card.querySelector('.name').value, note:card.querySelector('.note').value, email:card.querySelector('.email').value }); msg('Saved'); }
+        catch (e) { msg(e.message, true); }
+      };
+      card.querySelector('.forget').onclick = async () => {
+        if (!confirm('Forget this person? Their face is deleted.')) return;
+        try { await api('forget', { id }); loadMemories(); } catch (e) { msg(e.message, true); }
+      };
+    });
+  } catch (e) { el.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
 
-  load();
+// ── aliases ──────────────────────────────────────────────────────────────────
+async function loadAliases() {
+  const el = $('tab-aliases'); el.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const [{ aliases }, { connections }] = await Promise.all([api('aliases'), api('connections')]);
+    const opts = connections.map((c) => `<option value="${esc(c.slug)}">${esc(c.name)}</option>`).join('');
+    el.innerHTML = `
+      <div class="card stack">
+        <b>Add a shortcut</b>
+        <div class="muted">Say a word of your own instead of the service name.</div>
+        <input id="a-phrase" placeholder="e.g. mail" autocapitalize="off">
+        <label>Opens</label><select id="a-slug">${opts}</select>
+        <label>Optional canned request</label><input id="a-action" placeholder="e.g. newer_than:2d">
+        <button class="primary" id="a-add">Add</button>
+      </div>
+      <div id="a-list">${
+        aliases.length ? aliases.map((a) => `
+          <div class="card row">
+            <div><b>“${esc(a.phrase)}”</b> → ${esc(a.slug)}${a.action ? ' <span class="muted">(' + esc(a.action) + ')</span>' : ''}</div>
+            <button class="ghost" data-rm="${esc(a.phrase)}">Remove</button>
+          </div>`).join('') : '<p class="muted">No shortcuts yet.</p>'
+      }</div>`;
+    $('a-add').onclick = async () => {
+      try {
+        await api('alias.add', { phrase:$('a-phrase').value, slug:$('a-slug').value, action:$('a-action').value.trim() });
+        msg('Added — say “Kavi sync” on your glasses to use it'); loadAliases();
+      } catch (e) { msg(e.message, true); }
+    };
+    el.querySelectorAll('[data-rm]').forEach((b) => b.onclick = async () => {
+      try { await api('alias.remove', { phrase:b.dataset.rm }); loadAliases(); } catch (e) { msg(e.message, true); }
+    });
+  } catch (e) { el.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+start();
 </script>
-</body></html>
+</body>
+</html>
