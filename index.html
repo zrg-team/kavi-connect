@@ -4,66 +4,225 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Kavi</title>
+<!--
+  Kavi console (docs/16). Opened on a phone from a link the glasses show; the
+  ?code is the pairing code. Manages the wearer's connected services, the people
+  Kavi remembers, and their voice shortcuts. Thin client: all logic is in the
+  Supabase `console` Edge Function; this page renders what it returns.
+
+  PUBLIC static page (GitHub Pages) — the functions domain refuses to render HTML.
+  Nothing secret here: the project URL, the publishable key (RLS on, no policies)
+  and the low-privilege app key are all meant to reach browsers.
+
+  Design: committed dark "HUD", monochrome Rokid green (#40ff5e) — the glasses'
+  own display colour. Responsive: a stacked column on phones; a sticky status
+  rail + card grid on desktop.
+-->
 <style>
-  :root { --g:#40ff5e; --g6:rgba(64,255,94,.6); --g4:rgba(64,255,94,.4); --g08:rgba(64,255,94,.08); --bg:#000; }
-  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  body { margin:0; background:var(--bg); color:var(--g); font:15px/1.5 -apple-system,system-ui,sans-serif; }
-  header { display:flex; align-items:center; justify-content:space-between; padding:16px; border-bottom:1px solid var(--g4); }
-  h1 { font:700 20px/1 ui-monospace,monospace; margin:0; letter-spacing:1px; }
-  main { max-width:560px; margin:0 auto; padding:16px; }
-  button { font:inherit; color:var(--g); background:transparent; border:1px solid var(--g6); border-radius:10px; padding:10px 14px; cursor:pointer; }
-  button.primary { background:var(--g); color:#000; font-weight:700; border-color:var(--g); }
-  button.ghost { border-color:var(--g4); color:var(--g6); }
-  button:active { opacity:.7; }
-  input, textarea, select { font:inherit; color:var(--g); background:#000; border:1px solid var(--g4); border-radius:10px; padding:10px; width:100%; }
-  nav { display:flex; gap:8px; margin:16px 0; }
-  nav button { flex:1; }
-  nav button.on { background:var(--g08); border-color:var(--g); }
-  .card { border:1px solid var(--g4); border-radius:12px; padding:14px; margin-bottom:12px; }
-  .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  .muted { color:var(--g6); font-size:13px; }
-  .err { color:var(--g); background:var(--g08); border:1px solid var(--g4); border-radius:10px; padding:10px; margin:10px 0; }
-  .stack > * + * { margin-top:8px; }
-  .center { text-align:center; padding:48px 16px; }
-  label { display:block; font-size:12px; color:var(--g6); margin:10px 0 4px; }
-  .tick { color:var(--g); }
-  .hide { display:none; }
-  code { font:14px ui-monospace,monospace; color:var(--g); }
+  :root{
+    --bg:#04080a; --bg-elev:#07120c;
+    --ink:#dcf7e3; --mut:#7fa98c; --dim:#547f66;
+    --line:rgba(64,255,94,.16); --line-2:rgba(64,255,94,.32);
+    --glass:rgba(9,24,15,.52); --glass-2:rgba(12,30,19,.66); --tile:rgba(4,12,7,.7);
+    --green:#40ff5e; --green-soft:#93ffa8; --green-deep:#0a1a0f;
+    --grad:linear-gradient(102deg,var(--green-soft) 0%,var(--green) 72%);
+    --glow:0 0 22px rgba(64,255,94,.38);
+    --bad:#ff9d8f; --r:16px;
+    --fsans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",system-ui,sans-serif;
+    --fmono:ui-monospace,"SF Mono",Menlo,"Cascadia Mono",monospace;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--ink); min-height:100dvh;
+    font:16px/1.55 var(--fsans); letter-spacing:.1px;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    position:relative; overflow-x:hidden;
+    padding:28px 18px calc(32px + env(safe-area-inset-bottom));
+  }
+  body::before{
+    content:""; position:fixed; inset:-30% -10% -10%; z-index:-2; pointer-events:none;
+    background:
+      radial-gradient(44% 40% at 20% 6%, rgba(64,255,94,.20), transparent 70%),
+      radial-gradient(46% 42% at 82% 2%, rgba(64,255,94,.12), transparent 72%),
+      radial-gradient(60% 50% at 60% 104%, rgba(64,255,94,.10), transparent 72%);
+    filter:blur(16px); animation:drift 20s ease-in-out infinite alternate;
+  }
+  body::after{
+    content:""; position:fixed; inset:0; z-index:-2; pointer-events:none; opacity:.45;
+    background:
+      linear-gradient(rgba(64,255,94,.045) 1px,transparent 1px) 0 0/100% 42px,
+      linear-gradient(90deg,rgba(64,255,94,.045) 1px,transparent 1px) 0 0/42px 100%;
+    -webkit-mask-image:radial-gradient(85% 65% at 50% 0%,#000,transparent 86%);
+            mask-image:radial-gradient(85% 65% at 50% 0%,#000,transparent 86%);
+  }
+  @keyframes drift{from{transform:translate3d(-2%,-1%,0) scale(1.03)} to{transform:translate3d(3%,2%,0) scale(1.09)}}
+
+  .deck{max-width:468px; margin:0 auto; display:grid; grid-template-columns:1fr; gap:20px}
+  @media (min-width:860px){
+    .deck.ready{max-width:1020px; grid-template-columns:334px minmax(0,1fr); gap:34px; align-items:start}
+    .deck.ready .side{position:sticky; top:28px}
+  }
+  .reveal{opacity:0; transform:translateY(10px); animation:rise .6s cubic-bezier(.2,.7,.2,1) forwards}
+  @keyframes rise{to{opacity:1; transform:none}}
+
+  .brand{display:flex; align-items:center; gap:11px}
+  .sig{position:relative; width:13px; height:13px; flex:0 0 auto}
+  .sig i{position:absolute; inset:0; border-radius:50%; background:var(--green); box-shadow:0 0 14px 3px rgba(64,255,94,.7)}
+  .sig::after{content:""; position:absolute; inset:-6px; border-radius:50%; border:1.5px solid rgba(64,255,94,.5); animation:ping 2.6s ease-out infinite}
+  @keyframes ping{0%{transform:scale(.6); opacity:.9} 100%{transform:scale(1.7); opacity:0}}
+  .word{font-size:28px; font-weight:800; letter-spacing:3px; margin:0; line-height:1;
+        background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent;
+        filter:drop-shadow(0 0 15px rgba(64,255,94,.4))}
+  .tag{font:600 10px/1 var(--fmono); letter-spacing:3px; color:var(--dim); text-transform:uppercase;
+       border:1px solid var(--line); border-radius:6px; padding:5px 7px; margin-left:2px}
+  .sub{color:var(--mut); font-size:14px; margin:12px 2px 0; max-width:40ch}
+
+  .readout{display:flex; align-items:center; gap:9px; margin-top:15px; padding:9px 13px; width:max-content; max-width:100%;
+    background:var(--tile); border:1px solid var(--line); border-radius:11px}
+  .readout .lbl{font:600 10px/1 var(--fmono); letter-spacing:2.5px; color:var(--dim); text-transform:uppercase}
+  .readout .val{font:700 15px/1 var(--fmono); letter-spacing:1px; color:var(--green); text-shadow:0 0 12px rgba(64,255,94,.5)}
+
+  .signin{display:flex; align-items:center; gap:12px; margin-top:13px; padding:13px 15px; border-radius:14px;
+    background:linear-gradient(120deg,rgba(64,255,94,.11),rgba(64,255,94,.03));
+    border:1px solid rgba(64,255,94,.34); box-shadow:0 0 26px rgba(64,255,94,.10) inset}
+  .ring{position:relative; width:26px; height:26px; flex:0 0 auto; border-radius:50%; border:2px solid rgba(64,255,94,.28)}
+  .ring::before{content:""; position:absolute; inset:-2px; border-radius:50%; border:2px solid transparent;
+    border-top-color:var(--green); border-right-color:var(--green); animation:spin 2.8s linear infinite; box-shadow:0 0 12px rgba(64,255,94,.5)}
+  .ring::after{content:"✓"; position:absolute; inset:0; display:grid; place-items:center; color:var(--green); font-size:13px; font-weight:800}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .signin b{font-size:14px; color:var(--green)}
+  .signin small{display:block; color:var(--mut); font-weight:400; font-size:12.5px; margin-top:2px}
+
+  .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:16px}
+  .stat{background:var(--glass); border:1px solid var(--line); border-radius:14px; padding:13px 12px;
+    -webkit-backdrop-filter:blur(9px); backdrop-filter:blur(9px)}
+  .stat .n{font:800 26px/1 var(--fsans); font-variant-numeric:tabular-nums;
+    background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent;
+    filter:drop-shadow(0 0 11px rgba(64,255,94,.35))}
+  .stat .k{font:600 10px/1.3 var(--fmono); letter-spacing:1.5px; color:var(--dim); text-transform:uppercase; margin-top:7px}
+
+  nav{display:flex; gap:5px; padding:5px; margin-bottom:16px; border-radius:14px;
+    background:var(--glass); border:1px solid var(--line); -webkit-backdrop-filter:blur(9px); backdrop-filter:blur(9px)}
+  nav button{flex:1; border:0; background:transparent; color:var(--mut); font:700 13.5px/1 var(--fsans);
+    padding:10px 6px; border-radius:10px; cursor:pointer; transition:.18s}
+  nav button:hover{color:var(--ink)}
+  nav button.on{color:var(--green-deep); background:var(--grad); box-shadow:0 0 20px rgba(64,255,94,.38)}
+
+  .list{display:grid; grid-template-columns:1fr; gap:12px}
+  /* connections stay full-width rows (roomy, no wrapping); people/shortcuts go 2-up */
+  @media (min-width:860px){ .deck.ready .list.grid{grid-template-columns:repeat(auto-fill,minmax(288px,1fr))} }
+  .row{display:flex; align-items:center; gap:14px; padding:14px; border-radius:var(--r);
+    background:var(--glass); border:1px solid var(--line); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+    transition:transform .12s, border-color .18s, box-shadow .18s}
+  .row:hover{border-color:var(--line-2); box-shadow:0 8px 30px rgba(0,0,0,.4), 0 0 22px rgba(64,255,94,.08)}
+  .row.live{border-color:rgba(64,255,94,.44); box-shadow:0 0 24px rgba(64,255,94,.13)}
+  .ico{flex:0 0 auto; width:46px; height:46px; display:grid; place-items:center; font-size:23px;
+    background:var(--tile); border:1px solid var(--line-2); border-radius:13px; box-shadow:0 0 18px rgba(64,255,94,.10) inset}
+  .meta{flex:1 1 auto; min-width:0}
+  .eyebrow{font:600 9.5px/1 var(--fmono); letter-spacing:2px; text-transform:uppercase; color:var(--dim); margin-bottom:5px}
+  .name{font-weight:700; font-size:15.5px}
+  .desc{color:var(--mut); font-size:12.8px; margin-top:3px; line-height:1.45}
+  .act{flex:0 0 auto}
+
+  .ava{flex:0 0 auto; width:46px; height:46px; border-radius:50%; display:grid; place-items:center;
+    font:800 17px/1 var(--fsans); color:var(--green-deep); background:var(--grad); box-shadow:0 0 18px rgba(64,255,94,.38)}
+
+  .btn{font:700 13.5px/1 var(--fsans); border-radius:11px; padding:10px 16px; cursor:pointer;
+    color:var(--green); background:rgba(64,255,94,.06); border:1.5px solid rgba(64,255,94,.5); transition:.14s}
+  .btn:hover{background:rgba(64,255,94,.13); box-shadow:var(--glow)}
+  .btn:active{transform:scale(.96)}
+  .btn.solid{color:var(--green-deep); background:var(--grad); border-color:transparent; box-shadow:0 0 20px rgba(64,255,94,.38)}
+  .btn.ghost{color:var(--mut); border-color:var(--line-2); background:transparent}
+  .btn.ghost:hover{color:var(--ink); box-shadow:none; background:rgba(64,255,94,.06)}
+  .btn.block{width:100%; margin-top:15px}
+  .btn:disabled{opacity:.55; cursor:default}
+  .btn:focus-visible{outline:2px solid var(--green); outline-offset:2px}
+  .chip{display:inline-flex; align-items:center; gap:6px; font:700 12.5px/1 var(--fsans); color:var(--green);
+    padding:8px 12px; border-radius:10px; background:rgba(64,255,94,.10); border:1px solid rgba(64,255,94,.36)}
+  .chip i{width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 9px 1px var(--green)}
+
+  .card{padding:15px; border-radius:var(--r); background:var(--glass); border:1px solid var(--line);
+    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px)}
+  .chead{display:flex; align-items:center; gap:12px}
+  .chead .name{font-size:15px}
+  label{display:block; font:600 10px/1 var(--fmono); letter-spacing:1.5px; text-transform:uppercase; color:var(--dim); margin:13px 0 6px}
+  input,textarea,select{width:100%; font:15px/1.5 var(--fsans); color:var(--ink); background:var(--tile);
+    border:1px solid var(--line); border-radius:11px; padding:11px 13px}
+  input::placeholder,textarea::placeholder{color:var(--dim)}
+  input:focus,textarea:focus,select:focus{outline:none; border-color:rgba(64,255,94,.55); box-shadow:0 0 0 3px rgba(64,255,94,.12)}
+  textarea{resize:vertical}
+  .frow{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px}
+  .seen{font:600 11px/1 var(--fmono); letter-spacing:1px; color:var(--dim); text-transform:uppercase}
+  .btns{display:flex; gap:8px}
+  .alias .arrow{color:var(--dim); margin:0 3px}
+  .alias .slugv{color:var(--green)}
+  .alias .tail{color:var(--dim); font:600 11px var(--fmono)}
+
+  /* enter-code screen */
+  .enter-card{max-width:360px; margin:0 auto; text-align:center}
+  .enter-card .ico{margin:0 auto 4px}
+  .enter{display:flex; flex-direction:column; gap:11px; margin-top:16px; text-align:left}
+
+  .msg{margin:16px 2px 0; font-size:14px; min-height:20px; color:var(--mut)}
+  .msg.bad{color:var(--bad)}
+  .empty{color:var(--mut); font-size:14px; text-align:center; padding:24px 8px}
+  .skeleton{height:74px; border-radius:var(--r); border:1px solid var(--line);
+    background:linear-gradient(90deg,var(--glass),var(--glass-2),var(--glass)); background-size:200% 100%; animation:sh 1.3s linear infinite}
+  @keyframes sh{to{background-position:-200% 0}}
+  .foot{color:var(--dim); font-size:11.5px; margin-top:24px; text-align:center; line-height:1.7}
+  .foot b{color:var(--mut); font-weight:600}
+  @media (min-width:860px){ .deck.ready .foot{grid-column:1 / -1} }
+  [hidden]{display:none !important}
+  @media (prefers-reduced-motion:reduce){ *{animation:none !important} .reveal{opacity:1; transform:none} }
 </style>
 </head>
 <body>
-<header>
-  <h1>Kavi</h1>
-  <span id="hdr" class="muted"></span>
-</header>
-<main>
-  <div id="msg"></div>
-
-  <!-- no code: ask for one -->
-  <section id="need-code" class="center hide">
-    <p>Manage your connections, the people Kavi remembers, and your voice shortcuts.</p>
-    <p class="muted">Say “Kavi start” on your glasses and open the link they show — or enter the code.</p>
-    <div class="stack" style="max-width:280px;margin:16px auto 0">
-      <input id="code" placeholder="e.g. olive-cedar-0417" autocapitalize="off" autocomplete="off">
-      <button class="primary" id="usecode">Open</button>
+<div class="deck" id="deck">
+  <div class="side reveal">
+    <div class="brand"><span class="sig"><i></i></span><h1 class="word">KAVI</h1><span class="tag">Console</span></div>
+    <p class="sub" id="sub">Your glasses’ control deck — connections, the people Kavi remembers, and your voice shortcuts.</p>
+    <div class="readout" id="readout" hidden><span class="lbl">Glasses&nbsp;code</span><span class="val" id="chipcode"></span></div>
+    <div class="signin" id="signin" hidden>
+      <span class="ring"></span>
+      <div><b>Your glasses are signed in</b><small>They finish on their own in a moment — nothing to press.</small></div>
     </div>
-  </section>
-
-  <!-- the app -->
-  <section id="app" class="hide">
-    <div id="finish" class="card hide" style="border-color:var(--g)">
-      <b>Signing your glasses in…</b><div class="muted">Your glasses just got the go-ahead — they finish on their own in a moment. Nothing to press.</div>
+    <div class="stats" id="stats" hidden>
+      <div class="stat"><div class="n" id="s-con">–</div><div class="k">Connected</div></div>
+      <div class="stat"><div class="n" id="s-ppl">–</div><div class="k">People</div></div>
+      <div class="stat"><div class="n" id="s-sc">–</div><div class="k">Shortcuts</div></div>
     </div>
-    <nav>
-      <button data-tab="connections" class="on">Connections</button>
-      <button data-tab="memories">People</button>
-      <button data-tab="aliases">Shortcuts</button>
-    </nav>
-    <div id="tab-connections"></div>
-    <div id="tab-memories" class="hide"></div>
-    <div id="tab-aliases" class="hide"></div>
-  </section>
-</main>
+  </div>
+
+  <div class="main reveal" style="animation-delay:.08s">
+    <!-- no code yet -->
+    <section id="need-code" hidden>
+      <div class="card enter-card">
+        <div class="ico">🛰️</div>
+        <div class="name">Open from your glasses</div>
+        <p class="desc" style="margin-top:6px">Say “Kavi start” and open the link they show — or enter the code below.</p>
+        <div class="enter">
+          <input id="code" placeholder="e.g. olive-cedar-0417" autocapitalize="off" autocomplete="off" spellcheck="false">
+          <button class="btn solid" id="usecode">Open console</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- the app -->
+    <section id="app" hidden>
+      <nav>
+        <button class="on" data-tab="con">Connections</button>
+        <button data-tab="ppl">People</button>
+        <button data-tab="sc">Shortcuts</button>
+      </nav>
+      <div id="con" class="list"></div>
+      <div id="ppl" class="list grid" hidden></div>
+      <div id="sc" hidden></div>
+    </section>
+  </div>
+
+  <p class="foot reveal" style="animation-delay:.16s">Powered by <b>Composio</b> · Face memory works without any of these — it’s built&nbsp;in.</p>
+</div>
 
 <script>
 // ── config (public values) ──────────────────────────────────────────────────
@@ -72,24 +231,30 @@ const ANON = 'sb_publishable_a2TGE2bo1NFdfpMyoaettw_u1PJuQUD';
 // Low-privilege app-identity key. NOT a secret (this file is public), but sent so
 // the server's guard() can filter unkeyed traffic and rotate off a stale build.
 // Empty ⇒ not sent; the server enforces it only when APP_KEY_VALUES is set. Keep
-// this in step with FACE.appKey in config.js.
+// in step with FACE.appKey in config.js.
 const APP_KEY = 'kavi_app_zSohC633IwkGQc23KfmsB2sJfc9ZEjkeWDQftqL7fRM';
 
 const $ = (id) => document.getElementById(id);
-const show = (id, on = true) => $(id).classList.toggle('hide', !on);
+const show = (id, on = true) => { $(id).hidden = !on; };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const mono = (n) => String(n||'?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase() || '?';
 let CODE = new URLSearchParams(location.search).get('code') || '';
 let msgTimer;
 function msg(text, isErr) {
-  $('msg').innerHTML = text ? `<div class="${isErr ? 'err' : 'muted'}">${esc(text)}</div>` : '';
-  clearTimeout(msgTimer); if (text && !isErr) msgTimer = setTimeout(() => msg(''), 2500);
+  const m = $('msg') || (() => { const p = document.createElement('p'); p.id = 'msg'; p.className = 'msg';
+    $('deck').appendChild(p); return p; })();
+  m.textContent = text || ''; m.className = 'msg' + (isErr ? ' bad' : '');
+  clearTimeout(msgTimer); if (text && !isErr) msgTimer = setTimeout(() => msg(''), 2600);
 }
 
-// ── the console API, always carrying the pairing code ────────────────────────
+// ── the console API, always carrying the pairing code + app key ──────────────
 async function api(action, extra = {}) {
   const r = await fetch(FN + '/console', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', apikey: ANON, authorization: 'Bearer ' + ANON, ...(APP_KEY ? { 'x-app-key': APP_KEY } : {}) },
+    headers: {
+      'content-type': 'application/json', apikey: ANON, authorization: 'Bearer ' + ANON,
+      ...(APP_KEY ? { 'x-app-key': APP_KEY } : {}),
+    },
     body: JSON.stringify({ action, user_code: CODE, ...extra }),
   });
   const j = await r.json().catch(() => ({}));
@@ -99,73 +264,90 @@ async function api(action, extra = {}) {
 
 // ── entry ────────────────────────────────────────────────────────────────────
 async function start() {
-  msg('');
   if (!CODE) { show('need-code', true); show('app', false); return; }
+  $('chipcode').textContent = CODE; show('readout', true);
   try {
-    // This call also approves a pending sign-in (server-side), so the glasses can
-    // be finished with a press. Learn whether that just happened, to show the hint.
-    const st = await api('signin-status');
-    await api('people');       // succeeds only if the code resolves to a tenant
+    const st = await api('signin-status'); // also approves a pending sign-in server-side
+    const { people } = await api('people'); // succeeds only if the code resolves to a tenant
     openApp();
-    show('finish', !!st.approved);
+    if (st.approved) show('signin', true);
+    setStat('s-ppl', people.length);
+    // shortcuts count for the header (people already known; connections set on render)
+    api('aliases').then(({ aliases }) => setStat('s-sc', aliases.length)).catch(() => {});
   } catch (e) {
-    if (e.reason === 'no-owner') { show('need-code', true); $('code').value = CODE; msg('That code has expired — say “Kavi start” for a fresh one.', true); }
-    else { msg(e.message, true); }
+    if (e.reason === 'no-owner') {
+      show('need-code', true); show('app', false); show('readout', false);
+      $('code').value = CODE;
+      msg('That code has expired — say “Kavi start” for a fresh one.', true);
+    } else { msg(e.message, true); }
   }
 }
 $('usecode').onclick = () => { CODE = $('code').value.trim().toLowerCase(); start(); };
+$('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('usecode').click(); });
 
-function openApp() { show('need-code', false); show('app', true); $('hdr').textContent = 'linked'; selectTab('connections'); }
+function openApp() {
+  show('need-code', false); show('app', true); show('stats', true);
+  $('deck').classList.add('ready');
+  selectTab('con');
+}
+function setStat(id, n) { $(id).textContent = n; }
 
 // ── tabs ─────────────────────────────────────────────────────────────────────
 document.querySelectorAll('nav button').forEach((b) => b.onclick = () => selectTab(b.dataset.tab));
 function selectTab(tab) {
   document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
-  ['connections','memories','aliases'].forEach((t) => show('tab-' + t, t === tab));
-  if (tab === 'connections') loadConnections();
-  if (tab === 'memories') loadMemories();
-  if (tab === 'aliases') loadAliases();
+  ['con','ppl','sc'].forEach((t) => show(t, t === tab));
+  if (tab === 'con') loadConnections();
+  if (tab === 'ppl') loadMemories();
+  if (tab === 'sc') loadAliases();
 }
+const skeletons = (n) => Array.from({ length: n }, () => '<div class="skeleton"></div>').join('');
 
 // ── connections ──────────────────────────────────────────────────────────────
 async function loadConnections() {
-  const el = $('tab-connections'); el.innerHTML = '<p class="muted">Loading…</p>';
+  const el = $('con'); el.innerHTML = skeletons(3);
   try {
     const { connections } = await api('connections');
+    setStat('s-con', connections.filter((c) => c.connected).length);
     el.innerHTML = connections.map((c) => `
-      <div class="card">
-        <div class="row">
-          <div><b>${c.icon || ''} ${esc(c.name)}</b><div class="muted">${esc(c.summary)}</div></div>
-          ${c.connected ? '<span class="tick">✓ connected</span>' : `<button class="primary" data-connect="${esc(c.slug)}">Connect</button>`}
+      <div class="row${c.connected ? ' live' : ''}">
+        <div class="ico">${c.icon || '🔌'}</div>
+        <div class="meta">
+          ${c.category ? `<div class="eyebrow">${esc(c.category)}</div>` : ''}
+          <div class="name">${esc(c.name)}</div><div class="desc">${esc(c.summary)}</div>
         </div>
+        <div class="act">${c.connected
+          ? '<span class="chip"><i></i>Connected</span>'
+          : `<button class="btn" data-connect="${esc(c.slug)}">Connect</button>`}</div>
       </div>`).join('');
     el.querySelectorAll('[data-connect]').forEach((b) => b.onclick = async () => {
+      b.disabled = true; b.textContent = 'Opening…'; msg('');
       try { const { url } = await api('connect', { slug: b.dataset.connect }); location.href = url; }
-      catch (e) { msg(e.message, true); }
+      catch (e) { b.disabled = false; b.textContent = 'Connect'; msg(e.message, true); }
     });
-  } catch (e) { el.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  } catch (e) { el.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 
-// ── memories ─────────────────────────────────────────────────────────────────
+// ── memories / people ────────────────────────────────────────────────────────
 async function loadMemories() {
-  const el = $('tab-memories'); el.innerHTML = '<p class="muted">Loading…</p>';
+  const el = $('ppl'); el.innerHTML = skeletons(2);
   try {
     const { people } = await api('people');
-    if (!people.length) { el.innerHTML = '<p class="muted">No one yet. Say “Kavi halo” at someone to remember them.</p>'; return; }
+    setStat('s-ppl', people.length);
+    if (!people.length) { el.innerHTML = '<p class="empty">No one yet. Say “Kavi halo” at someone to remember them.</p>'; return; }
     el.innerHTML = people.map((p) => `
       <div class="card" data-id="${esc(p.id)}">
-        <input class="name" value="${esc(p.name)}">
+        <div class="chead"><div class="ava">${esc(mono(p.name))}</div>
+          <div class="meta"><div class="eyebrow">seen ${p.seen_count || 1}×</div><input class="name-in" value="${esc(p.name)}"></div></div>
         <label>Note</label><textarea class="note" rows="2">${esc(p.note)}</textarea>
-        <label>Email</label><input class="email" value="${esc(p.email)}">
-        <div class="row" style="margin-top:10px">
-          <span class="muted">seen ${p.seen_count || 1}×</span>
-          <span><button class="save">Save</button> <button class="ghost forget">Forget</button></span>
-        </div>
+        <label>Email</label><input class="email" value="${esc(p.email)}" autocapitalize="off" spellcheck="false">
+        <div class="frow"><span class="seen">face memory</span>
+          <span class="btns"><button class="btn save">Save</button><button class="btn ghost forget">Forget</button></span></div>
       </div>`).join('');
     el.querySelectorAll('.card').forEach((card) => {
       const id = card.dataset.id;
       card.querySelector('.save').onclick = async () => {
-        try { await api('person', { id, name:card.querySelector('.name').value, note:card.querySelector('.note').value, email:card.querySelector('.email').value }); msg('Saved'); }
+        try { await api('person', { id, name: card.querySelector('.name-in').value, note: card.querySelector('.note').value, email: card.querySelector('.email').value }); msg('Saved'); }
         catch (e) { msg(e.message, true); }
       };
       card.querySelector('.forget').onclick = async () => {
@@ -173,41 +355,41 @@ async function loadMemories() {
         try { await api('forget', { id }); loadMemories(); } catch (e) { msg(e.message, true); }
       };
     });
-  } catch (e) { el.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  } catch (e) { el.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 
-// ── aliases ──────────────────────────────────────────────────────────────────
+// ── shortcuts / aliases ──────────────────────────────────────────────────────
 async function loadAliases() {
-  const el = $('tab-aliases'); el.innerHTML = '<p class="muted">Loading…</p>';
+  const el = $('sc'); el.innerHTML = skeletons(2);
   try {
     const [{ aliases }, { connections }] = await Promise.all([api('aliases'), api('connections')]);
+    setStat('s-sc', aliases.length);
     const opts = connections.map((c) => `<option value="${esc(c.slug)}">${esc(c.name)}</option>`).join('');
     el.innerHTML = `
-      <div class="card stack">
-        <b>Add a shortcut</b>
-        <div class="muted">Say a word of your own instead of the service name.</div>
-        <input id="a-phrase" placeholder="e.g. mail" autocapitalize="off">
+      <div class="card">
+        <div class="chead"><div class="ico" style="width:38px;height:38px;font-size:18px">⚡</div>
+          <div class="meta"><div class="eyebrow">New shortcut</div><div class="name">Say your own word</div></div></div>
+        <label>Your word</label><input id="a-phrase" placeholder="e.g. mail" autocapitalize="off" spellcheck="false">
         <label>Opens</label><select id="a-slug">${opts}</select>
-        <label>Optional canned request</label><input id="a-action" placeholder="e.g. newer_than:2d">
-        <button class="primary" id="a-add">Add</button>
+        <label>Optional canned request</label><input id="a-action" placeholder="e.g. newer_than:2d" autocapitalize="off">
+        <button class="btn solid block" id="a-add">Add shortcut</button>
       </div>
-      <div id="a-list">${
-        aliases.length ? aliases.map((a) => `
-          <div class="card row">
-            <div><b>“${esc(a.phrase)}”</b> → ${esc(a.slug)}${a.action ? ' <span class="muted">(' + esc(a.action) + ')</span>' : ''}</div>
-            <button class="ghost" data-rm="${esc(a.phrase)}">Remove</button>
-          </div>`).join('') : '<p class="muted">No shortcuts yet.</p>'
-      }</div>`;
+      <div class="list grid" style="margin-top:12px">${aliases.length ? aliases.map((a) => `
+        <div class="row alias">
+          <div class="ico">🔤</div>
+          <div class="meta name">“${esc(a.phrase)}” <span class="arrow">→</span> <span class="slugv">${esc(a.slug)}</span>${a.action ? ` <span class="tail">${esc(a.action)}</span>` : ''}</div>
+          <div class="act"><button class="btn ghost" data-rm="${esc(a.phrase)}">Remove</button></div>
+        </div>`).join('') : '<p class="empty">No shortcuts yet.</p>'}</div>`;
     $('a-add').onclick = async () => {
       try {
-        await api('alias.add', { phrase:$('a-phrase').value, slug:$('a-slug').value, action:$('a-action').value.trim() });
+        await api('alias.add', { phrase: $('a-phrase').value, slug: $('a-slug').value, action: $('a-action').value.trim() });
         msg('Added — say “Kavi sync” on your glasses to use it'); loadAliases();
       } catch (e) { msg(e.message, true); }
     };
     el.querySelectorAll('[data-rm]').forEach((b) => b.onclick = async () => {
-      try { await api('alias.remove', { phrase:b.dataset.rm }); loadAliases(); } catch (e) { msg(e.message, true); }
+      try { await api('alias.remove', { phrase: b.dataset.rm }); loadAliases(); } catch (e) { msg(e.message, true); }
     });
-  } catch (e) { el.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  } catch (e) { el.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 
 start();
