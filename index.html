@@ -166,10 +166,16 @@
 
   .msg{margin:16px 2px 0; font-size:14px; min-height:20px; color:var(--mut)}
   .msg.bad{color:var(--bad)}
-  .empty{color:var(--mut); font-size:14px; text-align:center; padding:24px 8px}
-  .skeleton{height:74px; border-radius:var(--r); border:1px solid var(--line);
-    background:linear-gradient(90deg,var(--glass),var(--glass-2),var(--glass)); background-size:200% 100%; animation:sh 1.3s linear infinite}
-  @keyframes sh{to{background-position:-200% 0}}
+  /* empty states span the whole content width and center, even inside the grid */
+  .empty{grid-column:1 / -1; color:var(--mut); font-size:14px; text-align:center;
+    padding:52px 16px; line-height:1.6; text-wrap:balance}
+  /* skeletons mirror the real content, with a visible green light-sweep */
+  .sk-lines{flex:1 1 auto; min-width:0}
+  .sk-block{position:relative; overflow:hidden; background:rgba(64,255,94,.06); border-radius:8px}
+  .sk-block::after{content:""; position:absolute; inset:0; transform:translateX(-130%);
+    background:linear-gradient(90deg,transparent 0,rgba(64,255,94,.17) 50%,transparent 100%);
+    animation:sweep 1.45s ease-in-out infinite}
+  @keyframes sweep{100%{transform:translateX(130%)}}
   .foot{color:var(--dim); font-size:11.5px; margin-top:24px; text-align:center; line-height:1.7}
   .foot b{color:var(--mut); font-weight:600}
   @media (min-width:860px){ .deck.ready .foot{grid-column:1 / -1} }
@@ -187,7 +193,7 @@
   .modal .actions{display:flex; gap:10px; margin-top:18px}
   .modal .actions .btn{flex:1; text-align:center}
   [hidden]{display:none !important}
-  @media (prefers-reduced-motion:reduce){ *{animation:none !important} .reveal{opacity:1; transform:none} }
+  @media (prefers-reduced-motion:reduce){ *{animation:none !important} .reveal{opacity:1; transform:none} .sk-block::after{animation:none} }
 </style>
 </head>
 <body>
@@ -333,11 +339,33 @@ function selectTab(tab) {
   if (tab === 'ppl') loadMemories();
   if (tab === 'sc') loadAliases();
 }
-const skeletons = (n) => Array.from({ length: n }, () => '<div class="skeleton"></div>').join('');
+// Skeletons shaped like the real rows/cards, so loading reads as "content is
+// arriving here" rather than a couple of dead boxes.
+const skRow = () => `
+  <div class="row">
+    <div class="sk-block" style="width:46px;height:46px;border-radius:13px"></div>
+    <div class="sk-lines">
+      <div class="sk-block" style="width:34%;height:8px;margin-bottom:9px"></div>
+      <div class="sk-block" style="width:60%;height:13px;margin-bottom:9px"></div>
+      <div class="sk-block" style="width:88%;height:10px"></div>
+    </div>
+    <div class="sk-block" style="width:82px;height:36px;border-radius:11px"></div>
+  </div>`;
+const skCard = () => `
+  <div class="card">
+    <div class="chead">
+      <div class="sk-block" style="width:46px;height:46px;border-radius:50%"></div>
+      <div class="sk-lines"><div class="sk-block" style="width:30%;height:8px;margin-bottom:9px"></div><div class="sk-block" style="width:52%;height:13px"></div></div>
+    </div>
+    <div class="sk-block" style="width:100%;height:46px;border-radius:11px;margin-top:16px"></div>
+    <div class="sk-block" style="width:100%;height:40px;border-radius:11px;margin-top:12px"></div>
+  </div>`;
+const skRows = (n) => Array.from({ length: n }, skRow).join('');
+const skCards = (n) => Array.from({ length: n }, skCard).join('');
 
 // ── connections ──────────────────────────────────────────────────────────────
 async function loadConnections() {
-  const el = $('con'); el.innerHTML = skeletons(3);
+  const el = $('con'); el.innerHTML = skRows(3);
   try {
     const { connections } = await api('connections');
     setStat('s-con', connections.filter((c) => c.connected).length);
@@ -362,7 +390,7 @@ async function loadConnections() {
 
 // ── memories / people ────────────────────────────────────────────────────────
 async function loadMemories() {
-  const el = $('ppl'); el.innerHTML = skeletons(2);
+  const el = $('ppl'); el.innerHTML = skCards(2);
   try {
     const { people } = await api('people');
     setStat('s-ppl', people.length);
@@ -392,7 +420,7 @@ async function loadMemories() {
 
 // ── shortcuts / aliases ──────────────────────────────────────────────────────
 async function loadAliases() {
-  const el = $('sc'); el.innerHTML = skeletons(2);
+  const el = $('sc'); el.innerHTML = skRows(2);
   try {
     const [{ aliases }, { connections }] = await Promise.all([api('aliases'), api('connections')]);
     setStat('s-sc', aliases.length);
