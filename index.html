@@ -44,7 +44,7 @@
     <p>Manage your connections, the people Kavi remembers, and your voice shortcuts.</p>
     <p class="muted">Say “Kavi start” on your glasses and open the link they show — or enter the code.</p>
     <div class="stack" style="max-width:280px;margin:16px auto 0">
-      <input id="code" placeholder="e.g. olive-cedar-69" autocapitalize="off" autocomplete="off">
+      <input id="code" placeholder="e.g. olive-cedar-0417" autocapitalize="off" autocomplete="off">
       <button class="primary" id="usecode">Open</button>
     </div>
   </section>
@@ -52,7 +52,7 @@
   <!-- the app -->
   <section id="app" class="hide">
     <div id="finish" class="card hide" style="border-color:var(--g)">
-      <b>Almost done</b><div class="muted">If your glasses show a word, press the temple (or tap the card) to finish signing in.</div>
+      <b>Signing your glasses in…</b><div class="muted">Your glasses just got the go-ahead — they finish on their own in a moment. Nothing to press.</div>
     </div>
     <nav>
       <button data-tab="connections" class="on">Connections</button>
@@ -69,6 +69,11 @@
 // ── config (public values) ──────────────────────────────────────────────────
 const FN = 'https://qnjqghqjdyqrpifrbbdf.supabase.co/functions/v1';
 const ANON = 'sb_publishable_a2TGE2bo1NFdfpMyoaettw_u1PJuQUD';
+// Low-privilege app-identity key. NOT a secret (this file is public), but sent so
+// the server's guard() can filter unkeyed traffic and rotate off a stale build.
+// Empty ⇒ not sent; the server enforces it only when APP_KEY_VALUES is set. Keep
+// this in step with FACE.appKey in config.js.
+const APP_KEY = 'kavi_app_zSohC633IwkGQc23KfmsB2sJfc9ZEjkeWDQftqL7fRM';
 
 const $ = (id) => document.getElementById(id);
 const show = (id, on = true) => $(id).classList.toggle('hide', !on);
@@ -84,7 +89,7 @@ function msg(text, isErr) {
 async function api(action, extra = {}) {
   const r = await fetch(FN + '/console', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', apikey: ANON, authorization: 'Bearer ' + ANON },
+    headers: { 'content-type': 'application/json', apikey: ANON, authorization: 'Bearer ' + ANON, ...(APP_KEY ? { 'x-app-key': APP_KEY } : {}) },
     body: JSON.stringify({ action, user_code: CODE, ...extra }),
   });
   const j = await r.json().catch(() => ({}));
