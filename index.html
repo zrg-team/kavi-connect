@@ -155,6 +155,12 @@
   .frow{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px}
   .seen{font:600 11px/1 var(--fmono); letter-spacing:1px; color:var(--dim); text-transform:uppercase}
   .btns{display:flex; gap:8px}
+  .bind{margin-top:10px}
+  .bind label{margin:0 0 5px}
+  .bindrow{display:flex; gap:8px; align-items:center}
+  .bindrow select{flex:1; padding:8px 10px; font-size:13px}
+  .bindrow .btn{white-space:nowrap}
+  .needs{margin-top:8px; font:600 11px/1.4 var(--fmono); letter-spacing:.4px; color:var(--dim)}
   .alias .arrow{color:var(--dim); margin:0 3px}
   .alias .slugv{color:var(--green)}
   .alias .tail{color:var(--dim); font:600 11px var(--fmono)}
@@ -326,7 +332,10 @@ $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('usecode
 function openApp() {
   show('need-code', false); show('app', true); show('stats', true);
   $('deck').classList.add('ready');
-  selectTab('con');
+  // ?tab=sc deep-links a tab, so a link can point straight at Shortcuts and a
+  // headless capture can photograph one without clicking.
+  const wanted = new URLSearchParams(location.search).get('tab');
+  selectTab(['con', 'ppl', 'sc'].indexOf(wanted) === -1 ? 'con' : wanted);
 }
 function setStat(id, n) { $(id).textContent = n; }
 
@@ -369,23 +378,83 @@ async function loadConnections() {
   try {
     const { connections } = await api('connections');
     setStat('s-con', connections.filter((c) => c.connected).length);
-    el.innerHTML = connections.map((c) => `
-      <div class="row${c.connected ? ' live' : ''}">
-        <div class="ico">${c.icon || '🔌'}</div>
-        <div class="meta">
-          ${c.category ? `<div class="eyebrow">${esc(c.category)}</div>` : ''}
-          <div class="name">${esc(c.name)}</div><div class="desc">${esc(c.summary)}</div>
-        </div>
-        <div class="act">${c.connected
+
+    // A connected service may still need a choice the wearer has to make once —
+    // which Slack channel, which task list, which Linear team. The adapter
+    // declares those as `bindings`; without one it can only answer with a
+    // needs-setup card, so the row shows what is still missing.
+    const bindingRow = (c, b) => {
+      const chosen = (c.chosen || []).find((x) => x.key === b.key);
+      const id = 'bind-' + c.slug + '-' + b.key;
+      return '<div class="bind" id="' + id + '-wrap">' +
+        '<label>' + esc(b.label) + '</label>' +
+        '<div class="bindrow">' +
+          '<select id="' + id + '" data-bslug="' + esc(c.slug) + '" data-bkey="' + esc(b.key) + '">' +
+            '<option value="">' + (chosen ? esc(chosen.label || chosen.value) : 'Not chosen yet') + '</option>' +
+          '</select>' +
+          '<button class="btn ghost" data-bload="' + esc(c.slug) + '" data-bkey2="' + esc(b.key) + '">' +
+            (chosen ? 'Change' : 'Choose') + '</button>' +
+        '</div></div>';
+    };
+
+    el.innerHTML = connections.map((c) => {
+      const binds = (c.bindings || []);
+      const missing = binds.filter((b) => !(c.chosen || []).some((x) => x.key === b.key));
+      return '' +
+      '<div class="row' + (c.connected ? ' live' : '') + '">' +
+        '<div class="ico">' + (c.icon || '🔌') + '</div>' +
+        '<div class="meta">' +
+          (c.category ? '<div class="eyebrow">' + esc(c.category) + '</div>' : '') +
+          '<div class="name">' + esc(c.name) + '</div>' +
+          '<div class="desc">' + esc(c.summary) + '</div>' +
+          // Only render pickers once the service is actually connected: listing
+          // the options means running a tool against it.
+          (c.connected && binds.length
+            ? binds.map((b) => bindingRow(c, b)).join('')
+            : '') +
+          (c.connected && missing.length
+            ? '<div class="needs">Needs ' + esc(missing.map((b) => b.label.toLowerCase()).join(' and ')) + '</div>'
+            : '') +
+        '</div>' +
+        '<div class="act">' + (c.connected
           ? '<span class="chip"><i></i>Connected</span>'
-          : `<button class="btn" data-connect="${esc(c.slug)}">Connect</button>`}</div>
-      </div>`).join('');
+          : '<button class="btn" data-connect="' + esc(c.slug) + '">Connect</button>') + '</div>' +
+      '</div>';
+    }).join('');
+
     el.querySelectorAll('[data-connect]').forEach((b) => b.onclick = async () => {
       b.disabled = true; b.textContent = 'Opening…'; msg('');
       try { const { url } = await api('connect', { slug: b.dataset.connect }); location.href = url; }
       catch (e) { b.disabled = false; b.textContent = 'Connect'; msg(e.message, true); }
     });
-  } catch (e) { el.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+
+    // Options are fetched on demand, not on page load: each one is a live tool
+    // call against the service, and a wearer with six connections should not
+    // pay six round trips to look at the list.
+    el.querySelectorAll('[data-bload]').forEach((b) => b.onclick = async () => {
+      const slug = b.dataset.bload; const key = b.dataset.bkey2;
+      const sel = $('bind-' + slug + '-' + key);
+      const was = b.textContent;
+      b.disabled = true; b.textContent = 'Loading…';
+      try {
+        const { options } = await api('binding.list', { slug, key });
+        if (!options.length) { msg('Nothing to choose from yet.', true); return; }
+        sel.innerHTML = '<option value="">Choose…</option>' + options.map((o) =>
+          '<option value="' + esc(o.value) + '" data-label="' + esc(o.label) + '">' +
+          esc(o.label) + '</option>').join('');
+        sel.onchange = async () => {
+          const opt = sel.options[sel.selectedIndex];
+          if (!sel.value) return;
+          try {
+            await api('binding.set', { slug, key, value: sel.value, label: opt.dataset.label || '' });
+            msg('Saved — say “Kavi sync” on your glasses');
+            loadConnections();
+          } catch (e) { msg(e.message, true); }
+        };
+      } catch (e) { msg(e.message, true); }
+      finally { b.disabled = false; b.textContent = was; }
+    });
+  } catch (e) { el.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
 
 // ── memories / people ────────────────────────────────────────────────────────
@@ -419,37 +488,207 @@ async function loadMemories() {
 }
 
 // ── shortcuts / aliases ──────────────────────────────────────────────────────
+//
+// A shortcut is one word the wearer says. It can either just open a service
+// ("mail" → Gmail, and they say the rest), or run a specific ACTION with the
+// options already chosen ("google calendar tomorrow" → list tomorrow's events).
+//
+// The form is generated from the tool catalog the backend serves, so a service
+// added later gets a form here without this file changing. Day options are
+// stored as placeholders, never as dates — see utils/aliasargs.js on the
+// glasses: a saved "tomorrow" has to still mean tomorrow next week.
+let SERVICES = [];       // the action catalog, from api('tools')
+let EDITING = '';        // the phrase being edited; '' while adding
+
+function placeholderFor(mode, value) { return '{{' + mode + ':' + value + '}}'; }
+
+/** Reverse of the above, so editing an alias can prefill its day picker. */
+function dayFromPlaceholder(v) {
+  const m = String(v || '').match(/^\{\{(?:day|start|end):(.+)\}\}$/);
+  return m ? m[1] : '';
+}
+
+function toolsFor(slug) {
+  const svc = SERVICES.find((s) => s.slug === slug);
+  return (svc && svc.tools) || [];
+}
+
+/** One control per declared field; values are read back out by element id. */
+function fieldsHtml(fields, saved) {
+  return fields.map((f) => {
+    const id = 'af-' + f.key;
+
+    // A day field is a SELECT, never a free-text box: the wearer then cannot
+    // type a word the glasses would fail to resolve.
+    if (f.type === 'day') {
+      const firstArg = Object.keys(f.expands || {})[0] || f.key;
+      const current = dayFromPlaceholder(saved && saved[firstArg]) || f.default || 'today';
+      const opts = (f.choices || []).map((c) =>
+        '<option value="' + esc(c.value) + '"' + (c.value === current ? ' selected' : '') + '>' +
+        esc(c.label) + '</option>').join('');
+      return '<label>' + esc(f.label) + '</label>' +
+        '<select id="' + id + '" data-fkey="' + esc(f.key) + '">' + opts + '</select>';
+    }
+
+    const val = (saved && saved[f.key] !== undefined) ? saved[f.key]
+      : (f.default !== undefined ? f.default : '');
+
+    if (f.type === 'boolean') {
+      return '<label>' + esc(f.label) + '</label><select id="' + id + '" data-fkey="' + esc(f.key) + '">' +
+        '<option value="yes"' + (val ? ' selected' : '') + '>Yes</option>' +
+        '<option value="no"' + (val ? '' : ' selected') + '>No</option></select>';
+    }
+
+    if (f.type === 'choice') {
+      const opts = (f.choices || []).map((c) =>
+        '<option value="' + esc(c.value) + '"' + (c.value === val ? ' selected' : '') + '>' +
+        esc(c.label) + '</option>').join('');
+      return '<label>' + esc(f.label) + '</label>' +
+        '<select id="' + id + '" data-fkey="' + esc(f.key) + '">' + opts + '</select>';
+    }
+
+    const type = f.type === 'number' ? 'number' : 'text';
+    return '<label>' + esc(f.label) + (f.required ? ' *' : '') + '</label>' +
+      '<input id="' + id + '" type="' + type + '" data-fkey="' + esc(f.key) + '" ' +
+      'value="' + esc(val) + '" autocapitalize="off" spellcheck="false">';
+  }).join('');
+}
+
+/** Re-render the option controls under the action picker. */
+function renderFields(saved) {
+  const tool = $('a-tool').value;
+  const decl = toolsFor($('a-slug').value).find((t) => t.name === tool);
+  $('a-fields').innerHTML = decl ? fieldsHtml(decl.fields || [], saved) : '';
+  // A canned phrase and a structured action are mutually exclusive — the
+  // backend decides which kind of alias this is from exactly that.
+  show('a-canned', !tool);
+}
+
+function renderTools(saved) {
+  const tools = toolsFor($('a-slug').value);
+  const first = '<option value="">Just open it — I say the rest</option>';
+  $('a-tool').innerHTML = first + tools.map((t) =>
+    '<option value="' + esc(t.name) + '">' + esc(t.label) + '</option>').join('');
+  if (saved && saved.tool) $('a-tool').value = saved.tool;
+  renderFields(saved && saved.args);
+}
+
+/** Read the form back into what alias.add expects. */
+function readForm() {
+  const slug = $('a-slug').value;
+  const tool = $('a-tool').value;
+  const out = { phrase: $('a-phrase').value, slug, tool, args: {} };
+  if (!tool) { out.action = $('a-action').value.trim(); return out; }
+
+  const decl = toolsFor(slug).find((t) => t.name === tool);
+  for (const f of (decl && decl.fields) || []) {
+    const el = $('af-' + f.key);
+    if (!el) continue;
+
+    if (f.type === 'day') {
+      // One picker, several arguments — that is what `expands` is for.
+      const map = f.expands || {};
+      const keys = Object.keys(map);
+      if (keys.length) {
+        for (const argKey of keys) out.args[argKey] = placeholderFor(map[argKey], el.value);
+      } else {
+        out.args[f.key] = placeholderFor('day', el.value);
+      }
+      continue;
+    }
+
+    if (f.key.charAt(0) === '_') continue;   // a control, never an argument
+    if (f.type === 'number') { if (el.value !== '') out.args[f.key] = Number(el.value); continue; }
+    if (f.type === 'boolean') { out.args[f.key] = el.value === 'yes'; continue; }
+    if (el.value !== '') out.args[f.key] = el.value;
+  }
+  return out;
+}
+
+/** What a saved alias shows to the right of the arrow. */
+function summarize(a) {
+  if (!a.tool) return a.action ? '<span class="tail">' + esc(a.action) + '</span>' : '';
+  const decl = toolsFor(a.slug).find((t) => t.name === a.tool);
+  const label = (decl && decl.label) || a.tool;
+  const day = Object.keys(a.args || {}).map((k) => dayFromPlaceholder(a.args[k])).find(Boolean);
+  return '<span class="tail">' + esc(label) + (day ? ' · ' + esc(day) : '') + '</span>';
+}
+
 async function loadAliases() {
   const el = $('sc'); el.innerHTML = skRows(2);
   try {
-    const [{ aliases }, { connections }] = await Promise.all([api('aliases'), api('connections')]);
+    const [{ aliases }, { connections }, tools] = await Promise.all([
+      api('aliases'), api('connections'), api('tools'),
+    ]);
+    SERVICES = tools.services || [];
     setStat('s-sc', aliases.length);
-    const opts = connections.map((c) => `<option value="${esc(c.slug)}">${esc(c.name)}</option>`).join('');
-    el.innerHTML = `
-      <div class="card">
-        <div class="chead"><div class="ico" style="width:38px;height:38px;font-size:18px">⚡</div>
-          <div class="meta"><div class="eyebrow">New shortcut</div><div class="name">Say your own word</div></div></div>
-        <label>Your word</label><input id="a-phrase" placeholder="e.g. mail" autocapitalize="off" spellcheck="false">
-        <label>Opens</label><select id="a-slug">${opts}</select>
-        <label>Optional canned request</label><input id="a-action" placeholder="e.g. newer_than:2d" autocapitalize="off">
-        <button class="btn solid block" id="a-add">Add shortcut</button>
-      </div>
-      <div class="list grid" style="margin-top:12px">${aliases.length ? aliases.map((a) => `
-        <div class="row alias">
-          <div class="ico">🔤</div>
-          <div class="meta name">“${esc(a.phrase)}” <span class="arrow">→</span> <span class="slugv">${esc(a.slug)}</span>${a.action ? ` <span class="tail">${esc(a.action)}</span>` : ''}</div>
-          <div class="act"><button class="btn ghost" data-rm="${esc(a.phrase)}">Remove</button></div>
-        </div>`).join('') : '<p class="empty">No shortcuts yet.</p>'}</div>`;
+    const opts = connections.map((c) =>
+      '<option value="' + esc(c.slug) + '">' + esc(c.name) + '</option>').join('');
+
+    el.innerHTML =
+      '<div class="card" id="a-card">' +
+        '<div class="chead"><div class="ico" style="width:38px;height:38px;font-size:18px">⚡</div>' +
+          '<div class="meta"><div class="eyebrow" id="a-eyebrow">New shortcut</div>' +
+          '<div class="name">Say your own word</div></div></div>' +
+        '<label>Your word</label>' +
+        '<input id="a-phrase" placeholder="e.g. google calendar tomorrow" autocapitalize="off" spellcheck="false">' +
+        '<label>Opens</label><select id="a-slug">' + opts + '</select>' +
+        '<label>Action</label><select id="a-tool"></select>' +
+        '<div id="a-fields"></div>' +
+        '<div id="a-canned"><label>Optional canned request</label>' +
+          '<input id="a-action" placeholder="e.g. newer_than:2d" autocapitalize="off"></div>' +
+        '<button class="btn solid block" id="a-add">Add shortcut</button>' +
+        '<button class="btn ghost block" id="a-cancel" hidden style="margin-top:8px">Cancel</button>' +
+      '</div>' +
+      '<div class="list grid" style="margin-top:12px">' + (aliases.length ? aliases.map((a) =>
+        '<div class="row alias">' +
+          '<div class="ico">🔤</div>' +
+          '<div class="meta name">“' + esc(a.phrase) + '” <span class="arrow">→</span> ' +
+            '<span class="slugv">' + esc(a.slug) + '</span> ' + summarize(a) + '</div>' +
+          '<div class="act">' +
+            '<button class="btn ghost" data-ed="' + esc(a.phrase) + '">Edit</button> ' +
+            '<button class="btn ghost" data-rm="' + esc(a.phrase) + '">Remove</button></div>' +
+        '</div>').join('') : '<p class="empty">No shortcuts yet.</p>') + '</div>';
+
+    renderTools(null);
+    $('a-slug').onchange = () => renderTools(null);
+    $('a-tool').onchange = () => renderFields(null);
+
     $('a-add').onclick = async () => {
       try {
-        await api('alias.add', { phrase: $('a-phrase').value, slug: $('a-slug').value, action: $('a-action').value.trim() });
-        msg('Added — say “Kavi sync” on your glasses to use it'); loadAliases();
+        const form = readForm();
+        // phrase is the primary key, so a rename is a remove plus an add; the
+        // same phrase is a plain upsert and needs no delete.
+        const next = String(form.phrase || '').trim().toLowerCase();
+        if (EDITING && EDITING !== next) await api('alias.remove', { phrase: EDITING });
+        await api('alias.add', form);
+        msg('Saved — say “Kavi sync” on your glasses to use it');
+        EDITING = '';
+        loadAliases();
       } catch (e) { msg(e.message, true); }
     };
-    el.querySelectorAll('[data-rm]').forEach((b) => b.onclick = async () => {
-      try { await api('alias.remove', { phrase: b.dataset.rm }); loadAliases(); } catch (e) { msg(e.message, true); }
+
+    $('a-cancel').onclick = () => { EDITING = ''; loadAliases(); };
+
+    el.querySelectorAll('[data-ed]').forEach((b) => b.onclick = () => {
+      const a = aliases.find((x) => x.phrase === b.dataset.ed);
+      if (!a) return;
+      EDITING = a.phrase;
+      $('a-phrase').value = a.phrase;
+      $('a-slug').value = a.slug;
+      renderTools(a);
+      $('a-action').value = a.action || '';
+      $('a-eyebrow').textContent = 'Editing';
+      $('a-add').textContent = 'Save changes';
+      $('a-cancel').hidden = false;
+      $('a-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
-  } catch (e) { el.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+
+    el.querySelectorAll('[data-rm]').forEach((b) => b.onclick = async () => {
+      try { await api('alias.remove', { phrase: b.dataset.rm }); EDITING = ''; loadAliases(); }
+      catch (e) { msg(e.message, true); }
+    });
+  } catch (e) { el.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
 
 // ── durable session: a console token kept in localStorage, encrypted under a ──
