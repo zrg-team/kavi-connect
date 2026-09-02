@@ -617,8 +617,15 @@ function summarize(a) {
 async function loadAliases() {
   const el = $('sc'); el.innerHTML = skRows(2);
   try {
+    // `tools` is a newer route than the other two. If the backend has not been
+    // redeployed yet it answers "unknown action", and that must NOT take the
+    // whole tab down — the wearer can still define the free-text shortcuts they
+    // could always define. So it degrades to an empty catalog, which renders as
+    // "Just open it" with no action list, exactly as this tab worked before.
     const [{ aliases }, { connections }, tools] = await Promise.all([
-      api('aliases'), api('connections'), api('tools'),
+      api('aliases'),
+      api('connections'),
+      api('tools').catch(() => ({ services: [] })),
     ]);
     SERVICES = tools.services || [];
     setStat('s-sc', aliases.length);
